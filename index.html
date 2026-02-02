@@ -1,0 +1,38 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="utf-8">
+    <title>WebAR GPS Demo</title>
+
+    <!-- A-Frame -->
+    <script src="https://aframe.io/releases/1.4.0/aframe.min.js"></script>
+
+    <!-- AR.js z GPS -->
+    <script src="https://raw.githack.com/AR-js-org/AR.js/master/aframe/build/aframe-ar-nft.js"></script>
+
+    <style>
+      body, html { margin: 0; overflow: hidden; }
+    </style>
+  </head>
+
+  <body>
+    <a-scene
+      vr-mode-ui="enabled: false"
+      renderer="logarithmicDepthBuffer: true;"
+      embedded
+      arjs="sourceType: webcam; trackingMethod: best; debugUIEnabled: false;">
+
+      <!-- OBRAZ 2D W PRZESTRZENI -->
+      <a-image
+        src="YOUR_IMAGE.png"
+        gps-entity-place="latitude: 50.095491; longitude: 20.000378;"
+        look-at="[gps-camera]"
+        scale="5 5 5">
+      </a-image>
+
+      <!-- KAMERA Z GPS -->
+      <a-camera gps-camera rotation-reader></a-camera>
+
+    </a-scene>
+  </body>
+</html>
