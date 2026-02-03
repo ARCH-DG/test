@@ -32,6 +32,20 @@
 <body>
   <div id="loading">Ładowanie AR…</div>
 
+  <!-- WYMUSZENIE DOSTĘPU DO KAMERY -->
+  <script>
+    navigator.mediaDevices.getUserMedia({ video: true })
+      .then(stream => {
+        console.log("Kamera działa");
+        // zatrzymujemy strumień, bo mindAR i tak uruchomi własny
+        stream.getTracks().forEach(track => track.stop());
+      })
+      .catch(err => {
+        console.error("Błąd kamery:", err);
+      });
+  </script>
+
+  <!-- SCENA AR -->
   <a-scene
     mindar-image="imageTargetSrc: ./cat-target.mind; autoStart: true;"
     vr-mode-ui="enabled: false"
@@ -40,16 +54,12 @@
     embedded
   >
     <a-assets>
-      <!-- Obraz kota z Wikipedii (możesz podmienić na inny) -->
       <img id="wiki-cat" src="https://upload.wikimedia.org/wikipedia/commons/3/3a/Cat03.jpg" crossorigin="anonymous" />
     </a-assets>
 
-    <!-- Kamera AR -->
     <a-camera position="0 0 0" look-controls="enabled: false"></a-camera>
 
-    <!-- Kot z Wikipedii przyklejony do markera kota na poduszce -->
     <a-entity mindar-image-target="targetIndex: 0">
-      <!-- Płaska „kartka” z obrazem kota -->
       <a-plane
         src="#wiki-cat"
         position="0 0 0"
@@ -62,7 +72,6 @@
   </a-scene>
 
   <script>
-    // Proste ukrycie ekranu ładowania, gdy scena jest gotowa
     document.addEventListener("DOMContentLoaded", () => {
       const scene = document.querySelector("a-scene");
       const loading = document.getElementById("loading");
@@ -77,4 +86,3 @@
   </script>
 </body>
 </html>
-
