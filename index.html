@@ -32,18 +32,7 @@
 <body>
   <div id="loading">Ładowanie AR…</div>
 
-  <!-- WYMUSZENIE DOSTĘPU DO KAMERY -->
-  <script>
-    navigator.mediaDevices.getUserMedia({ video: true })
-      .then(stream => {
-        console.log("Kamera działa");
-        // zatrzymujemy strumień, bo mindAR i tak uruchomi własny
-        stream.getTracks().forEach(track => track.stop());
-      })
-      .catch(err => {
-        console.error("Błąd kamery:", err);
-      });
-  </script>
+ 
 
   <!-- SCENA AR -->
   <a-scene
@@ -86,3 +75,4 @@
   </script>
 </body>
 </html>
+
