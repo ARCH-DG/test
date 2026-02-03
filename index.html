@@ -1,40 +1,103 @@
 <!DOCTYPE html>
-<html>
+<html lang="pl">
   <head>
-    <meta charset="utf-8">
-    <title>WebAR GPS Demo</title>
-
-    <!-- A-Frame -->
-    <script src="https://aframe.io/releases/1.4.0/aframe.min.js"></script>
-
-    <!-- AR.js z GPS -->
-    <script src="https://raw.githack.com/AR-js-org/AR.js/master/aframe/build/aframe-ar-nft.js"></script>
-
-    <style>
-      body, html { margin: 0; overflow: hidden; }
-    </style>
+    <meta charset="utf-8" />
+    <title>Domowy prototyp AR</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no" />
+    <!-- A-Frame z obsługą WebXR -->
+    <script src="https://aframe.io/releases/1.5.0/aframe.min.js"></script>
   </head>
+  <body style="margin:0; overflow:hidden; background:#000;">
+    <div id="info"
+         style="position:fixed;z-index:10;left:0;right:0;top:0;
+                padding:8px 12px;font-family:sans-serif;font-size:14px;
+                color:#fff;background:rgba(0,0,0,0.6);">
+      Podnieś telefon nad blat kuchenny. Szukam płaszczyzny…
+    </div>
 
-  <body>
     <a-scene
       vr-mode-ui="enabled: false"
-      renderer="logarithmicDepthBuffer: true;"
       embedded
-      arjs="sourceType: webcam; trackingMethod: best; debugUIEnabled: false;">
+      renderer="colorManagement: true"
+      webxr="optionalFeatures: hit-test;">
+      
+      <!-- Kamera użytkownika -->
+      <a-entity id="cameraRig">
+        <a-camera position="0 1.6 0" look-controls></a-camera>
+      </a-entity>
 
-      <!-- OBRAZ 2D W PRZESTRZENI -->
-      <a-image
-        src="YOUR_IMAGE.png"
-        gps-entity-place="latitude: 50.095491; longitude: 20.000378;"
-        look-at="[gps-camera]"
-        scale="5 5 5">
+      <!-- Obiekt, który ma się pojawić na blacie -->
+      <!-- Podmień src na swój obrazek, np. assets/zas.png -->
+      <a-image id="kitchenObject"
+               src="https://upload.wikimedia.org/wikipedia/commons/thumb/3/3a/Cat03.jpg/320px-Cat03.jpg"
+               visible="false"
+               width="0.4"
+               height="0.4"
+               position="0 0 0"
+               rotation="-90 0 0">
       </a-image>
 
-      <!-- KAMERA Z GPS -->
-      <a-camera gps-camera rotation-reader></a-camera>
-
     </a-scene>
-    <!-- trigger build -->
+
+    <script>
+      const scene = document.querySelector('a-scene');
+      const img = document.querySelector('#kitchenObject');
+      const info = document.querySelector('#info');
+
+      let xrSession = null;
+      let viewerSpace = null;
+      let refSpace = null;
+      let hitTestSource = null;
+
+      scene.addEventListener('enter-vr', async () => {
+        try {
+          xrSession = scene.renderer.xr.getSession();
+          viewerSpace = await xrSession.requestReferenceSpace('viewer');
+          refSpace = await xrSession.requestReferenceSpace('local');
+          hitTestSource = await xrSession.requestHitTestSource({ space: viewerSpace });
+
+          info.textContent = 'Szukam płaszczyzny na wysokości blatu…';
+          xrSession.requestAnimationFrame(onXRFrame);
+        } catch (e) {
+          info.textContent = 'Twoje urządzenie nie obsługuje WebXR / hit-test.';
+          console.error(e);
+        }
+      });
+
+      function onXRFrame(time, frame) {
+        xrSession.requestAnimationFrame(onXRFrame);
+
+        const pose = frame.getViewerPose(refSpace);
+        if (!pose) return;
+
+        const hits = frame.getHitTestResults(hitTestSource);
+        if (!hits || hits.length === 0) {
+          img.setAttribute('visible', false);
+          return;
+        }
+
+        const hit = hits[0];
+        const hitPose = hit.getPose(refSpace);
+        const pos = hitPose.transform.position;
+
+        // Wysokość płaszczyzny nad "podłogą" (w metrach)
+        const y = pos.y;
+
+        // Zakres wysokości blatu – możesz korygować:
+        const MIN_HEIGHT = 0.8;  // 80 cm
+        const MAX_HEIGHT = 1.05; // 105 cm
+
+        if (y > MIN_HEIGHT && y < MAX_HEIGHT) {
+          // Ustawiamy obiekt na tej płaszczyźnie
+          img.object3D.position.set(pos.x, pos.y, pos.z);
+          img.object3D.quaternion.copy(hitPose.transform.orientation);
+          img.setAttribute('visible', true);
+          info.textContent = 'Znalazłam blat – wyświetlam obiekt.';
+        } else {
+          img.setAttribute('visible', false);
+          info.textContent = 'To nie wygląda na blat kuchenny…';
+        }
+      }
+    </script>
   </body>
 </html>
-
