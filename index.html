@@ -1,103 +1,219 @@
 <!DOCTYPE html>
 <html lang="pl">
-  <head>
-    <meta charset="utf-8" />
-    <title>Domowy prototyp AR</title>
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no" />
-    <!-- A-Frame z obsługą WebXR -->
-    <script src="https://aframe.io/releases/1.5.0/aframe.min.js"></script>
-  </head>
-  <body style="margin:0; overflow:hidden; background:#000;">
-    <div id="info"
-         style="position:fixed;z-index:10;left:0;right:0;top:0;
-                padding:8px 12px;font-family:sans-serif;font-size:14px;
-                color:#fff;background:rgba(0,0,0,0.6);">
-      Podnieś telefon nad blat kuchenny. Szukam płaszczyzny…
-    </div>
+<head>
+  <meta charset="utf-8" />
+  <title>Domowy prototyp WebXR</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no" />
+  <style>
+    body { margin:0; overflow:hidden; background:#000; }
+    #info {
+      position:fixed; left:0; right:0; top:0;
+      padding:8px 12px;
+      font-family:sans-serif; font-size:14px;
+      color:#fff; background:rgba(0,0,0,0.6);
+      z-index:10;
+    }
+    #enter {
+      position:fixed; left:50%; top:50%;
+      transform:translate(-50%,-50%);
+      padding:10px 18px;
+      font-family:sans-serif; font-size:16px;
+      background:#fff; color:#000;
+      border-radius:4px; border:none;
+      cursor:pointer; z-index:10;
+    }
+    canvas { display:block; }
+  </style>
+</head>
+<body>
+  <div id="info">Kliknij „Wejdź w AR”, potem skieruj telefon na blat kuchenny.</div>
+  <button id="enter">Wejdź w AR</button>
 
-    <a-scene
-      vr-mode-ui="enabled: false"
-      embedded
-      renderer="colorManagement: true"
-      webxr="optionalFeatures: hit-test;">
-      
-      <!-- Kamera użytkownika -->
-      <a-entity id="cameraRig">
-        <a-camera position="0 1.6 0" look-controls></a-camera>
-      </a-entity>
+  <script>
+    const info = document.getElementById('info');
+    const enterBtn = document.getElementById('enter');
 
-      <!-- Obiekt, który ma się pojawić na blacie -->
-      <!-- Podmień src na swój obrazek, np. assets/zas.png -->
-      <a-image id="kitchenObject"
-               src="https://upload.wikimedia.org/wikipedia/commons/thumb/3/3a/Cat03.jpg/320px-Cat03.jpg"
-               visible="false"
-               width="0.4"
-               height="0.4"
-               position="0 0 0"
-               rotation="-90 0 0">
-      </a-image>
+    let xrSession = null;
+    let gl = null;
+    let xrRefSpace = null;
+    let viewerSpace = null;
+    let hitTestSource = null;
 
-    </a-scene>
+    let quadProgram, quadBuffer, quadTexture;
+    let projectionMatrix = new Float32Array(16);
+    let viewMatrix = new Float32Array(16);
 
-    <script>
-      const scene = document.querySelector('a-scene');
-      const img = document.querySelector('#kitchenObject');
-      const info = document.querySelector('#info');
+    // Prosty obrazek – możesz później podmienić na swój
+    const IMAGE_URL = 'https://upload.wikimedia.org/wikipedia/commons/thumb/3/3a/Cat03.jpg/320px-Cat03.jpg';
 
-      let xrSession = null;
-      let viewerSpace = null;
-      let refSpace = null;
-      let hitTestSource = null;
+    enterBtn.addEventListener('click', async () => {
+      if (!navigator.xr) {
+        info.textContent = 'To urządzenie nie obsługuje WebXR.';
+        return;
+      }
 
-      scene.addEventListener('enter-vr', async () => {
-        try {
-          xrSession = scene.renderer.xr.getSession();
-          viewerSpace = await xrSession.requestReferenceSpace('viewer');
-          refSpace = await xrSession.requestReferenceSpace('local');
-          hitTestSource = await xrSession.requestHitTestSource({ space: viewerSpace });
+      const supported = await navigator.xr.isSessionSupported('immersive-ar');
+      if (!supported) {
+        info.textContent = 'Brak wsparcia dla immersive-ar.';
+        return;
+      }
 
-          info.textContent = 'Szukam płaszczyzny na wysokości blatu…';
-          xrSession.requestAnimationFrame(onXRFrame);
-        } catch (e) {
-          info.textContent = 'Twoje urządzenie nie obsługuje WebXR / hit-test.';
-          console.error(e);
-        }
+      xrSession = await navigator.xr.requestSession('immersive-ar', {
+        requiredFeatures: ['hit-test'],
+        optionalFeatures: ['local-floor']
       });
 
-      function onXRFrame(time, frame) {
-        xrSession.requestAnimationFrame(onXRFrame);
+      enterBtn.style.display = 'none';
+      info.textContent = 'Szukam płaszczyzny na wysokości blatu…';
 
-        const pose = frame.getViewerPose(refSpace);
-        if (!pose) return;
+      const canvas = document.createElement('canvas');
+      gl = canvas.getContext('webgl', { xrCompatible: true });
+      document.body.appendChild(canvas);
+
+      await gl.makeXRCompatible();
+      xrSession.updateRenderState({ baseLayer: new XRWebGLLayer(xrSession, gl) });
+
+      xrRefSpace = await xrSession.requestReferenceSpace('local');
+      viewerSpace = await xrSession.requestReferenceSpace('viewer');
+      hitTestSource = await xrSession.requestHitTestSource({ space: viewerSpace });
+
+      initGL(gl);
+      xrSession.requestAnimationFrame(onXRFrame);
+    });
+
+    function initGL(gl) {
+      const vsSource = `
+        attribute vec3 position;
+        attribute vec2 uv;
+        uniform mat4 uProjectionMatrix;
+        uniform mat4 uViewMatrix;
+        uniform mat4 uModelMatrix;
+        varying vec2 vUV;
+        void main(void) {
+          vUV = uv;
+          gl_Position = uProjectionMatrix * uViewMatrix * uModelMatrix * vec4(position, 1.0);
+        }
+      `;
+      const fsSource = `
+        precision mediump float;
+        varying vec2 vUV;
+        uniform sampler2D uTexture;
+        void main(void) {
+          gl_FragColor = texture2D(uTexture, vUV);
+        }
+      `;
+
+      function compile(type, source) {
+        const shader = gl.createShader(type);
+        gl.shaderSource(shader, source);
+        gl.compileShader(shader);
+        return shader;
+      }
+
+      const vs = compile(gl.VERTEX_SHADER, vsSource);
+      const fs = compile(gl.FRAGMENT_SHADER, fsSource);
+
+      quadProgram = gl.createProgram();
+      gl.attachShader(quadProgram, vs);
+      gl.attachShader(quadProgram, fs);
+      gl.linkProgram(quadProgram);
+
+      const vertices = new Float32Array([
+        // x, y, z,   u, v
+        -0.2, 0.0, -0.2,  0.0, 0.0,
+         0.2, 0.0, -0.2,  1.0, 0.0,
+        -0.2, 0.0,  0.2,  0.0, 1.0,
+         0.2, 0.0,  0.2,  1.0, 1.0
+      ]);
+
+      quadBuffer = gl.createBuffer();
+      gl.bindBuffer(gl.ARRAY_BUFFER, quadBuffer);
+      gl.bufferData(gl.ARRAY_BUFFER, vertices, gl.STATIC_DRAW);
+
+      quadTexture = gl.createTexture();
+      const img = new Image();
+      img.onload = () => {
+        gl.bindTexture(gl.TEXTURE_2D, quadTexture);
+        gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, img);
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+      };
+      img.crossOrigin = 'anonymous';
+      img.src = IMAGE_URL;
+    }
+
+    function onXRFrame(time, frame) {
+      xrSession.requestAnimationFrame(onXRFrame);
+
+      const pose = frame.getViewerPose(xrRefSpace);
+      if (!pose) return;
+
+      const glLayer = xrSession.renderState.baseLayer;
+      gl.bindFramebuffer(gl.FRAMEBUFFER, glLayer.framebuffer);
+      gl.clearColor(0, 0, 0, 0);
+      gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
+      gl.enable(gl.DEPTH_TEST);
+
+      for (const view of pose.views) {
+        const viewport = glLayer.getViewport(view);
+        gl.viewport(viewport.x, viewport.y, viewport.width, viewport.height);
+
+        projectionMatrix.set(view.projectionMatrix);
+        viewMatrix.set(view.transform.inverse.matrix);
 
         const hits = frame.getHitTestResults(hitTestSource);
-        if (!hits || hits.length === 0) {
-          img.setAttribute('visible', false);
-          return;
+
+        let showQuad = false;
+        let modelMatrix = new Float32Array(16);
+
+        if (hits.length > 0) {
+          const hit = hits[0];
+          const hitPose = hit.getPose(xrRefSpace);
+          const m = hitPose.transform.matrix;
+          const y = hitPose.transform.position.y;
+
+          const MIN_HEIGHT = 0.8;  // 80 cm
+          const MAX_HEIGHT = 1.05; // 105 cm
+
+          if (y > MIN_HEIGHT && y < MAX_HEIGHT) {
+            modelMatrix = m;
+            showQuad = true;
+            info.textContent = 'Znalazłam blat – wyświetlam obiekt.';
+          } else {
+            info.textContent = 'To nie wygląda na blat kuchenny…';
+          }
+        } else {
+          info.textContent = 'Szukam płaszczyzny na wysokości blatu…';
         }
 
-        const hit = hits[0];
-        const hitPose = hit.getPose(refSpace);
-        const pos = hitPose.transform.position;
+        if (showQuad) {
+          gl.useProgram(quadProgram);
 
-        // Wysokość płaszczyzny nad "podłogą" (w metrach)
-        const y = pos.y;
+          const posLoc = gl.getAttribLocation(quadProgram, 'position');
+          const uvLoc = gl.getAttribLocation(quadProgram, 'uv');
+          const uProjLoc = gl.getUniformLocation(quadProgram, 'uProjectionMatrix');
+          const uViewLoc = gl.getUniformLocation(quadProgram, 'uViewMatrix');
+          const uModelLoc = gl.getUniformLocation(quadProgram, 'uModelMatrix');
+          const uTexLoc = gl.getUniformLocation(quadProgram, 'uTexture');
 
-        // Zakres wysokości blatu – możesz korygować:
-        const MIN_HEIGHT = 0.8;  // 80 cm
-        const MAX_HEIGHT = 1.05; // 105 cm
+          gl.bindBuffer(gl.ARRAY_BUFFER, quadBuffer);
+          gl.enableVertexAttribArray(posLoc);
+          gl.vertexAttribPointer(posLoc, 3, gl.FLOAT, false, 20, 0);
+          gl.enableVertexAttribArray(uvLoc);
+          gl.vertexAttribPointer(uvLoc, 2, gl.FLOAT, false, 20, 12);
 
-        if (y > MIN_HEIGHT && y < MAX_HEIGHT) {
-          // Ustawiamy obiekt na tej płaszczyźnie
-          img.object3D.position.set(pos.x, pos.y, pos.z);
-          img.object3D.quaternion.copy(hitPose.transform.orientation);
-          img.setAttribute('visible', true);
-          info.textContent = 'Znalazłam blat – wyświetlam obiekt.';
-        } else {
-          img.setAttribute('visible', false);
-          info.textContent = 'To nie wygląda na blat kuchenny…';
+          gl.uniformMatrix4fv(uProjLoc, false, projectionMatrix);
+          gl.uniformMatrix4fv(uViewLoc, false, viewMatrix);
+          gl.uniformMatrix4fv(uModelLoc, false, modelMatrix);
+
+          gl.activeTexture(gl.TEXTURE0);
+          gl.bindTexture(gl.TEXTURE_2D, quadTexture);
+          gl.uniform1i(uTexLoc, 0);
+
+          gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
         }
       }
-    </script>
-  </body>
+    }
+  </script>
+</body>
 </html>
